@@ -12,6 +12,7 @@ import {
   UserCheck,
   GraduationCap,
   UserCircle,
+  ClipboardList,
   X,
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ profile, isOpen, onClose }) =>
     { href: '/admin/departments', label: 'Departments', icon: Building2 },
     { href: '/admin/courses', label: 'Courses', icon: BookOpen },
     { href: '/admin/instructors', label: 'Instructor Assignments', icon: UserCheck },
+    { href: '/admin/activity', label: 'Activity Logs', icon: ClipboardList },
   ];
 
   const instructorNav = [

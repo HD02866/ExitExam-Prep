@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdmin } from '@/lib/auth-helpers';
+import { logAdminActivity } from '@/lib/activity-logger';
 import { revalidatePath } from 'next/cache';
 import type { UserRole, AccountStatus } from '@/types/database.types';
 
@@ -16,7 +17,7 @@ export async function createStaffAccount(
   formData: FormData
 ): Promise<UserActionResult> {
   try {
-    const { user: adminUser } = await requireAdmin();
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
 
     const fullName = formData.get('fullName')?.toString().trim();
     const email = formData.get('email')?.toString().trim().toLowerCase();
@@ -83,8 +84,87 @@ export async function createStaffAccount(
       });
     }
 
+    // Log administrative action
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'user_create',
+      entityType: 'user',
+      entityId: newUser.user.id,
+      details: {
+        createdUserEmail: email,
+        createdUserName: fullName,
+        assignedRole: role,
+        departmentId,
+      },
+    });
+
     revalidatePath('/admin/users');
     revalidatePath('/admin/instructors');
+    revalidatePath('/admin');
+    return { success: true };
+  } catch (err: unknown) {
+    return { error: err instanceof Error ? err.message : 'An error occurred' };
+  }
+}
+
+export async function updateUserAccount(
+  userId: string,
+  formData: FormData
+): Promise<UserActionResult> {
+  try {
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
+
+    const fullName = formData.get('fullName')?.toString().trim();
+    const departmentId = formData.get('departmentId')?.toString().trim() || null;
+
+    if (!fullName) {
+      return { error: 'User full name cannot be empty.' };
+    }
+
+    const supabase = await createClient();
+
+    const { data: previousUser, error: fetchError } = await supabase
+      .from('profiles')
+      .select('full_name, email, department_id, role')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !previousUser) {
+      return { error: 'Target user not found.' };
+    }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        full_name: fullName,
+        department_id: departmentId,
+      })
+      .eq('id', userId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    // Log admin activity
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'user_update',
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        targetUserEmail: previousUser.email,
+        previousFullName: previousUser.full_name,
+        newFullName: fullName,
+        previousDepartmentId: previousUser.department_id,
+        newDepartmentId: departmentId,
+      },
+    });
+
+    revalidatePath('/admin/users');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
@@ -93,10 +173,10 @@ export async function createStaffAccount(
 
 export async function updateUserRole(userId: string, newRole: UserRole): Promise<UserActionResult> {
   try {
-    const { user: currentAdmin } = await requireAdmin();
+    const { user: currentAdmin, profile: adminProfile } = await requireAdmin();
 
     if (userId === currentAdmin.id) {
-      return { error: 'You cannot alter your own admin role.' };
+      return { error: 'Operation rejected: You cannot alter your own admin role.' };
     }
 
     if (!['admin', 'instructor', 'student'].includes(newRole)) {
@@ -104,6 +184,32 @@ export async function updateUserRole(userId: string, newRole: UserRole): Promise
     }
 
     const supabase = await createClient();
+
+    // Fetch target user profile
+    const { data: targetUser, error: fetchError } = await supabase
+      .from('profiles')
+      .select('role, full_name, email')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !targetUser) {
+      return { error: 'User not found.' };
+    }
+
+    // Safety guard: Prevent demoting the last active administrator
+    if (targetUser.role === 'admin' && newRole !== 'admin') {
+      const { count: activeAdminCount } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'admin')
+        .eq('account_status', 'active');
+
+      if ((activeAdminCount ?? 0) <= 1) {
+        return {
+          error: 'Security guard triggered: Cannot demote the last remaining active platform administrator.',
+        };
+      }
+    }
 
     const { error } = await supabase
       .from('profiles')
@@ -114,7 +220,24 @@ export async function updateUserRole(userId: string, newRole: UserRole): Promise
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: currentAdmin.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'user_role_change',
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        targetUserEmail: targetUser.email,
+        targetUserName: targetUser.full_name,
+        previousRole: targetUser.role,
+        newRole,
+      },
+    });
+
     revalidatePath('/admin/users');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
@@ -123,10 +246,10 @@ export async function updateUserRole(userId: string, newRole: UserRole): Promise
 
 export async function updateUserStatus(userId: string, newStatus: AccountStatus): Promise<UserActionResult> {
   try {
-    const { user: currentAdmin } = await requireAdmin();
+    const { user: currentAdmin, profile: adminProfile } = await requireAdmin();
 
     if (userId === currentAdmin.id) {
-      return { error: 'You cannot change your own account status.' };
+      return { error: 'Operation rejected: You cannot change or suspend your own account status.' };
     }
 
     if (!['active', 'inactive', 'suspended'].includes(newStatus)) {
@@ -134,6 +257,32 @@ export async function updateUserStatus(userId: string, newStatus: AccountStatus)
     }
 
     const supabase = await createClient();
+
+    // Fetch target user profile
+    const { data: targetUser, error: fetchError } = await supabase
+      .from('profiles')
+      .select('role, account_status, full_name, email')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !targetUser) {
+      return { error: 'User not found.' };
+    }
+
+    // Safety guard: Prevent deactivating or suspending the last active administrator
+    if (targetUser.role === 'admin' && newStatus !== 'active') {
+      const { count: activeAdminCount } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'admin')
+        .eq('account_status', 'active');
+
+      if ((activeAdminCount ?? 0) <= 1) {
+        return {
+          error: 'Security guard triggered: Cannot deactivate or suspend the last active platform administrator.',
+        };
+      }
+    }
 
     const { error } = await supabase
       .from('profiles')
@@ -144,7 +293,24 @@ export async function updateUserStatus(userId: string, newStatus: AccountStatus)
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: currentAdmin.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'user_status_change',
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        targetUserEmail: targetUser.email,
+        targetUserName: targetUser.full_name,
+        previousStatus: targetUser.account_status,
+        newStatus,
+      },
+    });
+
     revalidatePath('/admin/users');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
@@ -153,23 +319,66 @@ export async function updateUserStatus(userId: string, newStatus: AccountStatus)
 
 export async function deleteUserAccount(userId: string): Promise<UserActionResult> {
   try {
-    const { user: currentAdmin } = await requireAdmin();
+    const { user: currentAdmin, profile: adminProfile } = await requireAdmin();
 
     if (userId === currentAdmin.id) {
-      return { error: 'You cannot delete your own admin account.' };
+      return { error: 'Operation rejected: You cannot delete your own admin account.' };
+    }
+
+    const supabase = await createClient();
+
+    // Fetch target user profile
+    const { data: targetUser, error: fetchError } = await supabase
+      .from('profiles')
+      .select('role, full_name, email')
+      .eq('id', userId)
+      .single();
+
+    if (fetchError || !targetUser) {
+      return { error: 'User not found.' };
+    }
+
+    // Safety guard: Prevent deleting the last administrator
+    if (targetUser.role === 'admin') {
+      const { count: adminCount } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'admin');
+
+      if ((adminCount ?? 0) <= 1) {
+        return {
+          error: 'Security guard triggered: Cannot delete the last remaining platform administrator.',
+        };
+      }
     }
 
     const adminClient = createAdminClient();
 
-    // Deleting from auth.users cascades to public.profiles
+    // Deleting from auth.users cascades to public.profiles and instructor_departments
     const { error } = await adminClient.auth.admin.deleteUser(userId);
 
     if (error) {
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: currentAdmin.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'user_delete',
+      entityType: 'user',
+      entityId: userId,
+      details: {
+        deletedUserEmail: targetUser.email,
+        deletedUserName: targetUser.full_name,
+        deletedUserRole: targetUser.role,
+      },
+    });
+
     revalidatePath('/admin/users');
     revalidatePath('/admin/instructors');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };

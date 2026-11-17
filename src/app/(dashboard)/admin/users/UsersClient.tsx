@@ -12,6 +12,7 @@ import { Alert } from '@/components/ui/Alert';
 import { EmptyState } from '@/components/ui/EmptyState';
 import {
   createStaffAccount,
+  updateUserAccount,
   updateUserRole,
   updateUserStatus,
   deleteUserAccount,
@@ -26,6 +27,9 @@ import {
   Check,
   Ban,
   UserCheck,
+  Pencil,
+  AlertTriangle,
+  User,
 } from 'lucide-react';
 
 interface UsersClientProps {
@@ -43,6 +47,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -59,7 +64,9 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
   const filteredUsers = initialProfiles.filter((u) => {
     const matchesSearch =
       u.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase());
+      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.department?.code && u.department.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (u.department?.name && u.department.name.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesRole = roleFilter === 'all' || u.role === roleFilter;
     const matchesStatus = statusFilter === 'all' || u.account_status === statusFilter;
     return matchesSearch && matchesRole && matchesStatus;
@@ -80,6 +87,27 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
     } else {
       setIsCreateModalOpen(false);
       setActionSuccess('Account successfully provisioned.');
+      router.refresh();
+    }
+  }
+
+  // Handle Edit User (Full Name & Department)
+  async function handleEditUser(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selectedUser) return;
+
+    setIsLoading(true);
+    setActionError(null);
+
+    const formData = new FormData(e.currentTarget);
+    const result = await updateUserAccount(selectedUser.id, formData);
+
+    setIsLoading(false);
+    if (result.error) {
+      setActionError(result.error);
+    } else {
+      setIsEditModalOpen(false);
+      setActionSuccess(`User "${selectedUser.full_name}" updated successfully.`);
       router.refresh();
     }
   }
@@ -133,7 +161,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
       setActionError(result.error);
     } else {
       setIsDeleteModalOpen(false);
-      setActionSuccess(`Account for ${selectedUser.full_name} removed.`);
+      setActionSuccess(`Account for ${selectedUser.full_name} permanently removed.`);
       router.refresh();
     }
   }
@@ -148,9 +176,9 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">User Account Management</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">User Account Governance</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Provision faculty accounts, review registered students, and manage platform permissions
+            Provision faculty accounts, edit student profiles, assign roles, and audit account statuses
           </p>
         </div>
         <Button onClick={() => setIsCreateModalOpen(true)}>
@@ -172,7 +200,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
           <Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by name or email..."
+            placeholder="Search by name, email, or department..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500"
@@ -251,9 +279,25 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         {isCurrentAdmin ? (
-                          <span className="text-xs text-slate-400 italic">Current User</span>
+                          <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-medium border border-slate-200">
+                            <User className="h-3 w-3 text-slate-500" />
+                            You (Current Admin)
+                          </span>
                         ) : (
                           <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedUser(user);
+                                setIsEditModalOpen(true);
+                              }}
+                              title="Edit user details"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              <span className="hidden xl:inline text-xs">Edit</span>
+                            </Button>
+
                             <Button
                               variant="outline"
                               size="sm"
@@ -265,7 +309,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
                               title="Change Role"
                             >
                               <Shield className="h-3.5 w-3.5" />
-                              <span className="hidden lg:inline text-xs">Role</span>
+                              <span className="hidden xl:inline text-xs">Role</span>
                             </Button>
 
                             <Button
@@ -279,7 +323,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
                               title="Update Status"
                             >
                               <UserCheck className="h-3.5 w-3.5" />
-                              <span className="hidden lg:inline text-xs">Status</span>
+                              <span className="hidden xl:inline text-xs">Status</span>
                             </Button>
 
                             <Button
@@ -380,7 +424,56 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
         </form>
       </Modal>
 
-      {/* MODAL: Change Role */}
+      {/* MODAL: Edit User Details */}
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Edit User Details"
+        description={`Modify information for ${selectedUser?.email}`}
+        maxWidth="md"
+      >
+        {selectedUser && (
+          <form onSubmit={handleEditUser} className="space-y-4">
+            <Input
+              label="Full Legal Name"
+              name="fullName"
+              defaultValue={selectedUser.full_name}
+              required
+            />
+
+            <Input
+              label="University Email (Read-Only)"
+              name="email"
+              defaultValue={selectedUser.email}
+              disabled
+              helperText="Email addresses are linked to Supabase Auth identity"
+            />
+
+            <Select
+              label="Assigned Academic Department"
+              name="departmentId"
+              defaultValue={selectedUser.department_id || ''}
+              options={deptOptions}
+              placeholder="Select department (optional)"
+            />
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" isLoading={isLoading}>
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* MODAL: Change Role with Confirmation */}
       <Modal
         isOpen={isRoleModalOpen}
         onClose={() => setIsRoleModalOpen(false)}
@@ -394,28 +487,38 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
             value={newRole}
             onChange={(e) => setNewRole(e.target.value as UserRole)}
             options={[
-              { value: 'student', label: 'Student' },
-              { value: 'instructor', label: 'Instructor' },
-              { value: 'admin', label: 'Admin' },
+              { value: 'student', label: 'Student (Undergraduate prep)' },
+              { value: 'instructor', label: 'Instructor (Academic Faculty)' },
+              { value: 'admin', label: 'Admin (Platform Governance)' },
             ]}
           />
+
+          {newRole === 'admin' && (
+            <div className="p-3 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-800 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+              <span>
+                <strong>Elevated Privilege Notice:</strong> Granting Admin role gives this user full platform-wide governance permissions.
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setIsRoleModalOpen(false)}>
               Cancel
             </Button>
             <Button variant="primary" onClick={handleUpdateRole} isLoading={isLoading}>
-              Save Role
+              Confirm Role Change
             </Button>
           </div>
         </div>
       </Modal>
 
-      {/* MODAL: Change Status */}
+      {/* MODAL: Change Status with Confirmation */}
       <Modal
         isOpen={isStatusModalOpen}
         onClose={() => setIsStatusModalOpen(false)}
         title="Update Account Status"
-        description={`Set status for ${selectedUser?.full_name}`}
+        description={`Set access state for ${selectedUser?.full_name}`}
         maxWidth="sm"
       >
         <div className="space-y-4">
@@ -426,15 +529,29 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
             options={[
               { value: 'active', label: 'Active (Allowed access)' },
               { value: 'inactive', label: 'Inactive (Login disabled)' },
-              { value: 'suspended', label: 'Suspended (Sanctioned / locked)' },
+              { value: 'suspended', label: 'Suspended (Access blocked)' },
             ]}
           />
+
+          {newStatus !== 'active' && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                This user will be immediately logged out and blocked from signing in until an administrator reactivates the account.
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setIsStatusModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleUpdateStatus} isLoading={isLoading}>
-              Save Status
+            <Button
+              variant={newStatus === 'active' ? 'primary' : 'danger'}
+              onClick={handleUpdateStatus}
+              isLoading={isLoading}
+            >
+              Confirm Status Change
             </Button>
           </div>
         </div>
@@ -446,7 +563,7 @@ export function UsersClient({ initialProfiles, departments, currentAdminId }: Us
         onClose={() => setIsDeleteModalOpen(false)}
         onConfirm={handleDeleteUser}
         title="Delete User Account"
-        message={`Are you sure you want to permanently remove "${selectedUser?.full_name}" (${selectedUser?.email})? All associated records will be deleted.`}
+        message={`Are you sure you want to permanently remove "${selectedUser?.full_name}" (${selectedUser?.email})? All associated records will be deleted from Supabase Auth and database tables.`}
         confirmText="Delete Account"
         isDestructive
         isLoading={isLoading}

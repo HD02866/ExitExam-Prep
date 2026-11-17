@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 import Link from 'next/link';
+import type { AdminActivityLog } from '@/types/database.types';
 import {
   Users,
   Building2,
@@ -10,12 +12,15 @@ import {
   ArrowRight,
   ShieldCheck,
   CheckCircle2,
+  ClipboardList,
+  Clock,
+  History,
 } from 'lucide-react';
 
 export default async function AdminDashboardPage() {
   const supabase = await createClient();
 
-  // Fetch counts in parallel
+  // Fetch metrics in parallel
   const [
     { count: totalUsers },
     { count: totalStudents },
@@ -24,6 +29,8 @@ export default async function AdminDashboardPage() {
     { count: activeDepartments },
     { count: totalCourses },
     { count: totalAssignments },
+    { count: totalActivityLogs },
+    { data: recentLogsData },
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student'),
@@ -32,7 +39,11 @@ export default async function AdminDashboardPage() {
     supabase.from('departments').select('*', { count: 'exact', head: true }).eq('is_active', true),
     supabase.from('courses').select('*', { count: 'exact', head: true }),
     supabase.from('instructor_departments').select('*', { count: 'exact', head: true }),
+    supabase.from('admin_activity_logs').select('*', { count: 'exact', head: true }),
+    supabase.from('admin_activity_logs').select('*').order('created_at', { ascending: false }).limit(5),
   ]);
+
+  const recentLogs = (recentLogsData || []) as AdminActivityLog[];
 
   const stats = [
     {
@@ -60,29 +71,42 @@ export default async function AdminDashboardPage() {
       href: '/admin/courses',
     },
     {
-      title: 'Instructor Assignments',
+      title: 'Instructor Pairings',
       value: totalAssignments ?? 0,
-      subtext: 'Department-faculty pairings',
+      subtext: 'Department-faculty assignments',
       icon: UserCheck,
       color: 'bg-amber-50 text-amber-700',
       href: '/admin/instructors',
     },
   ];
 
+  const getActionBadge = (actionType: string) => {
+    if (actionType.includes('delete') || actionType.includes('remove') || actionType.includes('suspend')) {
+      return <Badge variant="danger">{actionType.replace('_', ' ')}</Badge>;
+    }
+    if (actionType.includes('create') || actionType.includes('assign') || actionType.includes('activate')) {
+      return <Badge variant="success">{actionType.replace('_', ' ')}</Badge>;
+    }
+    if (actionType.includes('deactivate')) {
+      return <Badge variant="warning">{actionType.replace('_', ' ')}</Badge>;
+    }
+    return <Badge variant="info">{actionType.replace('_', ' ')}</Badge>;
+  };
+
   return (
     <div className="space-y-8">
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-6 sm:p-8 text-white shadow-sm">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 rounded-2xl p-6 sm:p-8 text-white shadow-sm border border-slate-700/50">
         <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-3 border border-emerald-500/30">
             <ShieldCheck className="h-3.5 w-3.5" />
-            Admin Authority Console — Phase 1
+            Admin Governance & Verification Console — Phase 2
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-            Academic Administration & Governance
+            Academic Administration & Institutional Control
           </h1>
           <p className="mt-2 text-sm text-slate-300 leading-relaxed">
-            Manage institutional departments, curriculum courses, user authentication statuses, and instructor faculty assignments across ExitExam Prep.
+            Manage faculties, academic curricula, staff authorizations, and examine cryptographic audit logs. All administrative operations are monitored and recorded.
           </p>
         </div>
       </div>
@@ -114,7 +138,7 @@ export default async function AdminDashboardPage() {
 
       {/* Quick Operations Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card title="Academic Operations" subtitle="Manage structure and curriculum">
+        <Card title="Curricular Operations" subtitle="Establish academic structure and degree requirements">
           <div className="space-y-3">
             <Link
               href="/admin/departments"
@@ -126,7 +150,7 @@ export default async function AdminDashboardPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900">Manage Departments</p>
-                  <p className="text-xs text-slate-500">Create, edit, or deactivate university departments</p>
+                  <p className="text-xs text-slate-500">Create, edit, or deactivate university faculties</p>
                 </div>
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400" />
@@ -142,7 +166,7 @@ export default async function AdminDashboardPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900">Manage Courses</p>
-                  <p className="text-xs text-slate-500">Configure courses, course codes, and department ties</p>
+                  <p className="text-xs text-slate-500">Assign curriculum courses and exit modules</p>
                 </div>
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400" />
@@ -150,7 +174,7 @@ export default async function AdminDashboardPage() {
           </div>
         </Card>
 
-        <Card title="Personnel & Staffing" subtitle="User accounts and department faculty">
+        <Card title="Staffing & Governance" subtitle="User accounts, instructor assignments, and audit trails">
           <div className="space-y-3">
             <Link
               href="/admin/users"
@@ -177,8 +201,29 @@ export default async function AdminDashboardPage() {
                   <UserCheck className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="font-semibold text-slate-900">Instructor Assignments</p>
+                  <p className="font-semibold text-slate-900">Instructor Department Assignments</p>
                   <p className="text-xs text-slate-500">Pair faculty instructors to multiple university departments</p>
+                </div>
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-400" />
+            </Link>
+
+            <Link
+              href="/admin/activity"
+              className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-100 hover:border-slate-200 transition-all text-sm font-medium text-slate-800"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-teal-100 text-teal-800 rounded-lg">
+                  <ClipboardList className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-slate-900">Administrative Activity Logs</p>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-800">
+                      {totalActivityLogs ?? 0}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">Review complete audit trail of administrative modifications</p>
                 </div>
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400" />
@@ -187,11 +232,69 @@ export default async function AdminDashboardPage() {
         </Card>
       </div>
 
+      {/* Recent Activity Log Stream */}
+      <Card
+        title="Recent Administrative Operations"
+        subtitle="Live audit trail of the latest actions executed by administrators"
+        action={
+          <Link
+            href="/admin/activity"
+            className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1"
+          >
+            View all activity logs ({totalActivityLogs ?? 0}) <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        }
+      >
+        {recentLogs.length > 0 ? (
+          <div className="divide-y divide-slate-100 text-xs">
+            {recentLogs.map((log) => {
+              const detailsObj = (log.details as Record<string, unknown>) || {};
+              return (
+                <div key={log.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 shrink-0">
+                      <History className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-800">{log.admin_name}</span>
+                        {getActionBadge(log.action_type)}
+                      </div>
+                      <p className="text-slate-500 text-[11px] mt-0.5">
+                        {detailsObj.targetUserEmail ? (
+                          <span>Target user: {String(detailsObj.targetUserEmail)}</span>
+                        ) : detailsObj.name ? (
+                          <span>Department: {String(detailsObj.name)} ({String(detailsObj.code || '')})</span>
+                        ) : detailsObj.title ? (
+                          <span>Course: {String(detailsObj.code)} — {String(detailsObj.title)}</span>
+                        ) : detailsObj.instructorName ? (
+                          <span>Instructor: {String(detailsObj.instructorName)}</span>
+                        ) : (
+                          <span>Entity: {log.entity_type}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-slate-400 text-[11px] shrink-0">
+                    <Clock className="h-3 w-3" />
+                    {new Date(log.created_at).toLocaleString()}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-6 text-slate-500 text-xs">
+            No administrative actions recorded yet. All future operations will appear in this audit log.
+          </div>
+        )}
+      </Card>
+
       {/* Security notice */}
-      <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 flex items-start gap-3 text-xs text-emerald-900">
+      <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 flex items-start gap-3 text-xs text-emerald-900 shadow-xs">
         <CheckCircle2 className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
-        <div>
-          <span className="font-semibold">Security Enforcement Active:</span> Row Level Security (RLS) is enforced at the database layer. Client role claims are never trusted; administrative procedures require server-side cryptographic verification.
+        <div className="leading-relaxed">
+          <span className="font-semibold">Security & Verification Active:</span> RLS policies and server-side cryptographic checks strictly enforce role boundaries. Admin deletion or suspension of self is prevented. Departments with active courses or instructors are protected against accidental deletion.
         </div>
       </div>
     </div>

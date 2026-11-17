@@ -358,6 +358,48 @@ CREATE POLICY "Admins delete instructor assignments"
     USING (public.is_admin());
 
 -- -----------------------------------------------------------------------------
+-- PHASE 2: ADMINISTRATIVE ACTIVITY LOGS (Immutable Audit Trail)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.admin_activity_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    admin_email TEXT NOT NULL,
+    admin_name TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_logs_admin_id ON public.admin_activity_logs(admin_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON public.admin_activity_logs(action_type);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_entity ON public.admin_activity_logs(entity_type);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON public.admin_activity_logs(created_at DESC);
+
+ALTER TABLE public.admin_activity_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can view activity logs"
+    ON public.admin_activity_logs FOR SELECT
+    TO authenticated
+    USING (public.is_admin());
+
+CREATE POLICY "Admins can insert activity logs"
+    ON public.admin_activity_logs FOR INSERT
+    TO authenticated
+    WITH CHECK (public.is_admin());
+
+-- Phase 2 Case-Insensitive Uniqueness Indexes
+CREATE UNIQUE INDEX IF NOT EXISTS uq_departments_name_lower 
+    ON public.departments (LOWER(TRIM(name)));
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_departments_code_upper 
+    ON public.departments (UPPER(TRIM(code)));
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_courses_dept_code_upper 
+    ON public.courses (department_id, UPPER(TRIM(code)));
+
+-- -----------------------------------------------------------------------------
 -- SEED HELPER (Initial provisioning note):
 -- To make a user an Admin after they register, run:
 -- UPDATE public.profiles SET role = 'admin' WHERE email = 'admin@example.com';

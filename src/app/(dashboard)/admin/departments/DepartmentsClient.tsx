@@ -25,6 +25,7 @@ import {
   XCircle,
   Search,
   BookOpen,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface DepartmentWithCounts extends Department {
@@ -45,7 +46,7 @@ export function DepartmentsClient({ initialDepartments }: DepartmentsClientProps
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
-  const [selectedDept, setSelectedDept] = useState<Department | null>(null);
+  const [selectedDept, setSelectedDept] = useState<DepartmentWithCounts | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -399,17 +400,106 @@ export function DepartmentsClient({ initialDepartments }: DepartmentsClientProps
         )}
       </Modal>
 
-      {/* CONFIRM: Delete Department */}
-      <ConfirmDialog
+      {/* MODAL: Delete or Deactivate Department */}
+      <Modal
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
-        onConfirm={handleDelete}
-        title="Delete Academic Department"
-        message={`Are you sure you want to permanently delete "${selectedDept?.name}" (${selectedDept?.code})? Warning: Cascading foreign keys will delete associated courses and instructor links.`}
-        confirmText="Delete Department"
-        isDestructive
-        isLoading={isLoading}
-      />
+        title={
+          selectedDept &&
+          ((selectedDept.courseCount && selectedDept.courseCount > 0) ||
+            (selectedDept.instructorCount && selectedDept.instructorCount > 0))
+            ? 'Department Deletion Restricted'
+            : 'Delete Academic Department'
+        }
+        maxWidth="md"
+      >
+        {selectedDept && (
+          <div className="space-y-4">
+            {(selectedDept.courseCount && selectedDept.courseCount > 0) ||
+            (selectedDept.instructorCount && selectedDept.instructorCount > 0) ? (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 p-3.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-900">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-semibold text-amber-950">
+                      Deletion Blocked by Governance Policy
+                    </p>
+                    <p className="mt-1 text-amber-800">
+                      <strong>{selectedDept.name} ({selectedDept.code})</strong> has active curriculum dependencies:
+                    </p>
+                    <ul className="list-disc list-inside mt-2 space-y-1 text-xs text-amber-900 font-medium">
+                      {Boolean(selectedDept.courseCount && selectedDept.courseCount > 0) && (
+                        <li>{selectedDept.courseCount} associated course(s)</li>
+                      )}
+                      {Boolean(selectedDept.instructorCount && selectedDept.instructorCount > 0) && (
+                        <li>{selectedDept.instructorCount} assigned instructor(s)</li>
+                      )}
+                    </ul>
+                    <p className="mt-2.5 text-xs text-amber-800">
+                      To preserve curriculum integrity, departments with linked records cannot be deleted. You can deactivate the department instead to hide it from students and faculty.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsDeleteModalOpen(false)}
+                  >
+                    Close
+                  </Button>
+                  {selectedDept.is_active && (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      isLoading={isLoading}
+                      onClick={async () => {
+                        await handleToggleStatus(selectedDept);
+                        setIsDeleteModalOpen(false);
+                      }}
+                    >
+                      <XCircle className="h-4 w-4 mr-1.5" />
+                      Deactivate Department Instead
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-rose-50 rounded-full text-rose-600 shrink-0">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    Are you sure you want to permanently delete{' '}
+                    <strong className="text-slate-900">{selectedDept.name}</strong> ({selectedDept.code})?
+                    This action cannot be undone.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsDeleteModalOpen(false)}
+                    disabled={isLoading}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDelete}
+                    isLoading={isLoading}
+                  >
+                    Delete Department
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

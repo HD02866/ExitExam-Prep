@@ -138,7 +138,30 @@ export async function updateStudentDepartment(departmentId: string): Promise<Aut
   const profile = await getCurrentProfile();
 
   if (!profile) {
-    return { error: 'Unauthorized.' };
+    return { error: 'Unauthorized: Authentication required.' };
+  }
+
+  if (profile.account_status !== 'active') {
+    return { error: `Account is ${profile.account_status}. Operation denied.` };
+  }
+
+  if (profile.role !== 'student' && profile.role !== 'admin') {
+    return { error: 'Department selection is only applicable to students.' };
+  }
+
+  // Verify that the requested department exists and is active
+  const { data: dept, error: deptError } = await supabase
+    .from('departments')
+    .select('id, name, is_active')
+    .eq('id', departmentId)
+    .single();
+
+  if (deptError || !dept) {
+    return { error: 'Selected department does not exist.' };
+  }
+
+  if (!dept.is_active) {
+    return { error: `Cannot select "${dept.name}": Department is currently inactive.` };
   }
 
   const { error } = await supabase
@@ -166,7 +189,11 @@ export async function updateOwnProfile(prevState: AuthActionResult | null, formD
   const profile = await getCurrentProfile();
 
   if (!profile) {
-    return { error: 'Unauthorized.' };
+    return { error: 'Unauthorized: Authentication required.' };
+  }
+
+  if (profile.account_status !== 'active') {
+    return { error: `Account is ${profile.account_status}. Operation denied.` };
   }
 
   const updatePayload: { full_name: string; department_id?: string | null } = {
@@ -175,6 +202,16 @@ export async function updateOwnProfile(prevState: AuthActionResult | null, formD
 
   // Only student can set department_id through own profile
   if (profile.role === 'student' && departmentId) {
+    const { data: dept, error: deptError } = await supabase
+      .from('departments')
+      .select('id, name, is_active')
+      .eq('id', departmentId)
+      .single();
+
+    if (deptError || !dept || !dept.is_active) {
+      return { error: 'Selected academic department is invalid or inactive.' };
+    }
+
     updatePayload.department_id = departmentId;
   }
 

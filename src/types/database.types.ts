@@ -153,6 +153,48 @@ export interface Database {
           referencedColumns: string[];
         }[];
       };
+      admin_activity_logs: {
+        Row: {
+          id: string;
+          admin_id: string;
+          admin_email: string;
+          admin_name: string;
+          action_type: string;
+          entity_type: string;
+          entity_id: string | null;
+          details: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          admin_id: string;
+          admin_email: string;
+          admin_name: string;
+          action_type: string;
+          entity_type: string;
+          entity_id?: string | null;
+          details?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          admin_id?: string;
+          admin_email?: string;
+          admin_name?: string;
+          action_type?: string;
+          entity_type?: string;
+          entity_id?: string | null;
+          details?: Json;
+          created_at?: string;
+        };
+        Relationships: {
+          foreignKeyName: string;
+          columns: string[];
+          isOneToOne?: boolean;
+          referencedRelation: string;
+          referencedColumns: string[];
+        }[];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -178,3 +220,4 @@ export type Profile = Database['public']['Tables']['profiles']['Row'];
 export type Department = Database['public']['Tables']['departments']['Row'];
 export type Course = Database['public']['Tables']['courses']['Row'];
 export type InstructorDepartment = Database['public']['Tables']['instructor_departments']['Row'];
+export type AdminActivityLog = Database['public']['Tables']['admin_activity_logs']['Row'];

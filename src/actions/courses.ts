@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { requireAdmin } from '@/lib/auth-helpers';
+import { logAdminActivity } from '@/lib/activity-logger';
 import { revalidatePath } from 'next/cache';
 
 export interface CourseActionResult {
@@ -9,9 +10,12 @@ export interface CourseActionResult {
   error?: string;
 }
 
-export async function createCourse(prevState: CourseActionResult | null, formData: FormData): Promise<CourseActionResult> {
+export async function createCourse(
+  prevState: CourseActionResult | null,
+  formData: FormData
+): Promise<CourseActionResult> {
   try {
-    await requireAdmin();
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
 
     const code = formData.get('code')?.toString().trim().toUpperCase();
     const title = formData.get('title')?.toString().trim();
@@ -24,13 +28,42 @@ export async function createCourse(prevState: CourseActionResult | null, formDat
 
     const supabase = await createClient();
 
-    const { error } = await supabase.from('courses').insert({
-      code,
-      title,
-      description,
-      department_id: departmentId,
-      is_active: true,
-    });
+    // Verify department exists
+    const { data: dept, error: deptError } = await supabase
+      .from('departments')
+      .select('id, name, code')
+      .eq('id', departmentId)
+      .single();
+
+    if (deptError || !dept) {
+      return { error: 'Selected academic department does not exist.' };
+    }
+
+    // Check duplicate code within department (case-insensitive)
+    const { data: existingCourse } = await supabase
+      .from('courses')
+      .select('id, code')
+      .eq('department_id', departmentId)
+      .ilike('code', code)
+      .maybeSingle();
+
+    if (existingCourse) {
+      return {
+        error: `Course code "${code}" already exists in ${dept.name} (${dept.code}).`,
+      };
+    }
+
+    const { data: newCourse, error } = await supabase
+      .from('courses')
+      .insert({
+        code,
+        title,
+        description,
+        department_id: departmentId,
+        is_active: true,
+      })
+      .select('id')
+      .single();
 
     if (error) {
       if (error.code === '23505') {
@@ -39,7 +72,25 @@ export async function createCourse(prevState: CourseActionResult | null, formDat
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'course_create',
+      entityType: 'course',
+      entityId: newCourse?.id,
+      details: {
+        code,
+        title,
+        departmentId,
+        departmentCode: dept.code,
+        departmentName: dept.name,
+      },
+    });
+
     revalidatePath('/admin/courses');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
@@ -52,7 +103,7 @@ export async function updateCourse(
   formData: FormData
 ): Promise<CourseActionResult> {
   try {
-    await requireAdmin();
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
 
     const code = formData.get('code')?.toString().trim().toUpperCase();
     const title = formData.get('title')?.toString().trim();
@@ -65,6 +116,38 @@ export async function updateCourse(
     }
 
     const supabase = await createClient();
+
+    // Verify department exists
+    const { data: dept, error: deptError } = await supabase
+      .from('departments')
+      .select('id, name, code')
+      .eq('id', departmentId)
+      .single();
+
+    if (deptError || !dept) {
+      return { error: 'Selected academic department does not exist.' };
+    }
+
+    // Check duplicate code within department excluding current course
+    const { data: existingCourse } = await supabase
+      .from('courses')
+      .select('id, code')
+      .eq('department_id', departmentId)
+      .ilike('code', code)
+      .neq('id', id)
+      .maybeSingle();
+
+    if (existingCourse) {
+      return {
+        error: `Course code "${code}" is already in use in ${dept.name}.`,
+      };
+    }
+
+    const { data: previousCourse } = await supabase
+      .from('courses')
+      .select('*')
+      .eq('id', id)
+      .single();
 
     const { error } = await supabase
       .from('courses')
@@ -84,28 +167,73 @@ export async function updateCourse(
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'course_update',
+      entityType: 'course',
+      entityId: id,
+      details: {
+        previous: previousCourse
+          ? { code: previousCourse.code, title: previousCourse.title, departmentId: previousCourse.department_id, is_active: previousCourse.is_active }
+          : null,
+        updated: { code, title, departmentId, departmentCode: dept.code, is_active: isActive },
+      },
+    });
+
     revalidatePath('/admin/courses');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
   }
 }
 
-export async function toggleCourseStatus(id: string, currentStatus: boolean): Promise<CourseActionResult> {
+export async function toggleCourseStatus(
+  id: string,
+  currentStatus: boolean
+): Promise<CourseActionResult> {
   try {
-    await requireAdmin();
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
     const supabase = await createClient();
+
+    const newStatus = !currentStatus;
+
+    const { data: course } = await supabase
+      .from('courses')
+      .select('code, title, department:departments(code)')
+      .eq('id', id)
+      .single();
 
     const { error } = await supabase
       .from('courses')
-      .update({ is_active: !currentStatus })
+      .update({ is_active: newStatus })
       .eq('id', id);
 
     if (error) {
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: newStatus ? 'course_activate' : 'course_deactivate',
+      entityType: 'course',
+      entityId: id,
+      details: {
+        courseCode: course?.code,
+        courseTitle: course?.title,
+        previousStatus: currentStatus,
+        newStatus,
+      },
+    });
+
     revalidatePath('/admin/courses');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
@@ -114,8 +242,18 @@ export async function toggleCourseStatus(id: string, currentStatus: boolean): Pr
 
 export async function deleteCourse(id: string): Promise<CourseActionResult> {
   try {
-    await requireAdmin();
+    const { user: adminUser, profile: adminProfile } = await requireAdmin();
     const supabase = await createClient();
+
+    const { data: course, error: fetchError } = await supabase
+      .from('courses')
+      .select('code, title, department_id, department:departments(name)')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !course) {
+      return { error: 'Course not found.' };
+    }
 
     const { error } = await supabase
       .from('courses')
@@ -126,7 +264,23 @@ export async function deleteCourse(id: string): Promise<CourseActionResult> {
       return { error: error.message };
     }
 
+    // Log admin activity
+    await logAdminActivity({
+      adminId: adminUser.id,
+      adminEmail: adminProfile.email,
+      adminName: adminProfile.full_name,
+      actionType: 'course_delete',
+      entityType: 'course',
+      entityId: id,
+      details: {
+        courseCode: course.code,
+        courseTitle: course.title,
+        departmentId: course.department_id,
+      },
+    });
+
     revalidatePath('/admin/courses');
+    revalidatePath('/admin');
     return { success: true };
   } catch (err: unknown) {
     return { error: err instanceof Error ? err.message : 'An error occurred' };
