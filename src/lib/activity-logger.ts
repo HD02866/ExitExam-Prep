@@ -2,7 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { Json } from '@/types/database.types';
 
 export interface LogAdminActivityParams {
-  adminId: string;
+  adminId: string | null;
   adminEmail: string;
   adminName: string;
   actionType: string;
@@ -21,46 +21,56 @@ const FORBIDDEN_DETAIL_KEYS = new Set([
   'accessToken',
   'refreshToken',
   'hash',
+  'authorization',
+  'apikey',
 ]);
 
-function sanitizeDetails(details?: Record<string, unknown>): Json {
-  if (!details) return {};
+function sanitizeValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
 
-  const sanitized: Record<string, unknown> = {};
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue);
+  }
 
-  for (const [key, value] of Object.entries(details)) {
-    const lowerKey = key.toLowerCase();
+  const sanitizedObj: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const lowerKey = k.toLowerCase();
     const isSensitive = Array.from(FORBIDDEN_DETAIL_KEYS).some((forbidden) =>
       lowerKey.includes(forbidden)
     );
 
     if (isSensitive) {
-      sanitized[key] = '[REDACTED]';
-    } else if (value !== undefined) {
-      sanitized[key] = value;
+      sanitizedObj[k] = '[REDACTED]';
+    } else {
+      sanitizedObj[k] = sanitizeValue(v);
     }
   }
+  return sanitizedObj;
+}
 
-  return sanitized as Json;
+export function sanitizeDetails(details?: Record<string, unknown>): Json {
+  if (!details) return {};
+  return sanitizeValue(details) as Json;
 }
 
 export async function logAdminActivity(params: LogAdminActivityParams): Promise<void> {
-  try {
-    const adminClient = createAdminClient();
+  const adminClient = createAdminClient();
+  const sanitizedDetails = sanitizeDetails(params.details);
 
-    const sanitizedDetails = sanitizeDetails(params.details);
+  const { error } = await adminClient.from('admin_activity_logs').insert({
+    admin_id: params.adminId,
+    admin_email: params.adminEmail,
+    admin_name: params.adminName,
+    action_type: params.actionType,
+    entity_type: params.entityType,
+    entity_id: params.entityId || null,
+    details: sanitizedDetails,
+  });
 
-    await adminClient.from('admin_activity_logs').insert({
-      admin_id: params.adminId,
-      admin_email: params.adminEmail,
-      admin_name: params.adminName,
-      action_type: params.actionType,
-      entity_type: params.entityType,
-      entity_id: params.entityId || null,
-      details: sanitizedDetails,
-    });
-  } catch (err) {
-    // Activity logging should not crash the primary transaction, but log an error to server console
-    console.error('Failed to write admin activity log:', err);
+  if (error) {
+    const errorMsg = `[AUDIT ERROR] Mandatory audit logging failed: ${error.message} (action: ${params.actionType}, entity: ${params.entityType})`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
   }
 }

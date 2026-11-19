@@ -5,7 +5,7 @@
 -- 1. TABLE: admin_activity_logs (Immutable Audit Trail)
 CREATE TABLE IF NOT EXISTS public.admin_activity_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    admin_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    admin_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     admin_email TEXT NOT NULL,
     admin_name TEXT NOT NULL,
     action_type TEXT NOT NULL,
