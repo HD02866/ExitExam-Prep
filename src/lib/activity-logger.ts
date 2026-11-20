@@ -6,7 +6,7 @@ export interface LogAdminActivityParams {
   adminEmail: string;
   adminName: string;
   actionType: string;
-  entityType: 'user' | 'department' | 'course' | 'instructor_assignment';
+  entityType: 'user' | 'department' | 'course' | 'instructor_assignment' | 'exam' | 'question';
   entityId?: string | null;
   details?: Record<string, unknown>;
 }

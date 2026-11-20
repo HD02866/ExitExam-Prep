@@ -255,6 +255,18 @@ export async function deleteCourse(id: string): Promise<CourseActionResult> {
       return { error: 'Course not found.' };
     }
 
+    // Dependency check: Examinations referencing this course
+    const { count: examCount } = await supabase
+      .from('exams')
+      .select('*', { count: 'exact', head: true })
+      .eq('course_id', id);
+
+    if (examCount && examCount > 0) {
+      return {
+        error: `Cannot delete course: ${examCount} examination(s) reference this course. Please delete or reassign the examinations first.`,
+      };
+    }
+
     const { error } = await supabase
       .from('courses')
       .delete()

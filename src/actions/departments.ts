@@ -276,6 +276,18 @@ export async function deleteDepartment(id: string): Promise<DepartmentActionResu
       };
     }
 
+    // 4. Dependency check: Examinations
+    const { count: examCount } = await supabase
+      .from('exams')
+      .select('*', { count: 'exact', head: true })
+      .eq('department_id', id);
+
+    if (examCount && examCount > 0) {
+      return {
+        error: `Cannot delete department: ${examCount} examination(s) exist for "${dept.name}". Please delete or reassign the examinations first.`,
+      };
+    }
+
     const { error } = await supabase
       .from('departments')
       .delete()
